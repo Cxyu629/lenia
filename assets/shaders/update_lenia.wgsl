@@ -23,15 +23,15 @@ var <storage, read> growth_array: array<f32>;
 
 fn wrap(coords: vec2<i32>) -> vec2<i32> {
     let dimensions: vec2<i32> = textureDimensions(texture);
-    return vec2<i32>(i32(fract(f32(coords.x) / f32(dimensions.x)) * f32(dimensions.x)), i32(fract(f32(coords.y) / f32(dimensions.y)) * f32(dimensions.y)));
+    return vec2<i32>(fract(vec2<f32>(coords) / vec2<f32>(dimensions)) * vec2<f32>(dimensions));
 }
 
-fn calculate_with_texture(location: vec2<i32>, the_texture: texture_storage_2d<rgba32float, read>, the_area: f32, radius: f32) -> f32 {
-    var sum: f32 = 0.0;
+fn calculate_with_texture(location: vec2<i32>, the_texture: texture_storage_2d<rgba32float, read>, the_area: vec4<f32>, radius: f32) -> vec4<f32> {
+    var sum: vec4<f32> = vec4(0.0);
     for (var dx: f32 = -radius; dx <= radius; dx += 1.0) {
         for (var dy: f32 = -radius; dy <= radius; dy += 1.0) {
-            let weight = textureLoad(the_texture, wrap(vec2<i32>(i32(radius)) + vec2<i32>(i32(dx), i32(dy)))).x;
-            let value = textureLoad(texture, wrap(location + vec2<i32>(i32(dx), i32(dy)))).x;
+            let weight = textureLoad(the_texture, wrap(vec2<i32>(i32(radius)) + vec2<i32>(i32(dx), i32(dy))));
+            let value = textureLoad(texture, wrap(location + vec2<i32>(i32(dx), i32(dy))));
             sum += value * weight;
         }
     }
@@ -58,8 +58,8 @@ fn update(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
 
 
     let current = clamp(textureLoad(texture, location).x, 0.0, 1.0);
-    let potential = calculate_with_texture(location, kernel_texture, params.kernel_area, (params.kernel_resolution - 1.0)/2.0);
-    let growth = 2.0 * calculate_growth(potential, params.growth_resolution) - 1.0;
+    let potential = calculate_with_texture(location, kernel_texture, vec4<f32>(params.kernel_area), (params.kernel_resolution - 1.0)/2.0);
+    let growth = 2.0 * calculate_growth(potential.x, params.growth_resolution) - 1.0;
     let timestep = params.dt;
 
     let color = vec4<f32>(clamp(current + timestep * growth, 0.0, 1.0));

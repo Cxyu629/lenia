@@ -16,12 +16,12 @@ fn main() {
         LeniaRule::new(
             kernel_shell,
             Mapping::from_type(MappingType::GaussianGrowth {
-                mu: 0.14,
-                sigma: 0.015,
+                mu: 0.25,
+                sigma: 0.03,
             }),
         ),
         SIZE,
-        18,
+        26,
         0.1,
         100,
     );
