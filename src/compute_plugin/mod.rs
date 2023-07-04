@@ -12,10 +12,12 @@ use bevy::{
     },
 };
 
-use crate::{
-    lenia_plugin::params::{LeniaGPUGrowthArrayBuffer, LeniaGPUParamsBuffer, LeniaGPUTexture, LeniaGPUParams},
-    SIZE, WORKGROUP_SIZE,
+use crate::lenia_plugin::params::{
+    LeniaGPUGrowthArrayBuffer, LeniaGPUParams, LeniaGPUParamsBuffer, LeniaGPUTexture,
 };
+
+const SIZE: (u32, u32) = (1280, 720);
+const WORKGROUP_SIZE: u32 = 8;
 
 pub struct LeniaComputePlugin;
 
@@ -23,7 +25,9 @@ impl Plugin for LeniaComputePlugin {
     fn build(&self, app: &mut App) {
         // Extract the game of life image resource from the main world into the render world
         // for operation on by the compute shader and display on the sprite.
-        app.add_plugin(ExtractResourcePlugin::<LeniaImage>::default());
+        app.add_plugin(ExtractResourcePlugin::<LeniaImage>::default())
+            .add_startup_system(setup);
+
         let render_app = app.sub_app_mut(RenderApp);
 
         render_app
@@ -34,6 +38,34 @@ impl Plugin for LeniaComputePlugin {
         render_graph.add_node("lenia", LeniaNode::default());
         render_graph.add_node_edge("lenia", bevy::render::main_graph::node::CAMERA_DRIVER);
     }
+}
+
+fn setup(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
+    let mut image = Image::new_fill(
+        Extent3d {
+            width: SIZE.0,
+            height: SIZE.1,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        &[0, 0, 0, 255],
+        TextureFormat::Rgba8Unorm,
+    );
+    image.texture_descriptor.usage =
+        TextureUsages::COPY_DST | TextureUsages::STORAGE_BINDING | TextureUsages::TEXTURE_BINDING;
+    let image = images.add(image);
+
+    commands.spawn(SpriteBundle {
+        sprite: Sprite {
+            custom_size: Some(Vec2::new(SIZE.0 as f32, SIZE.1 as f32)),
+            ..default()
+        },
+        texture: image.clone(),
+        ..default()
+    });
+    commands.spawn(Camera2dBundle::default());
+
+    commands.insert_resource(LeniaImage(image));
 }
 
 #[derive(Resource, Clone, Deref, ExtractResource)]

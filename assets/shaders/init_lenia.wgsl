@@ -99,11 +99,17 @@ fn perlinNoise3(P: vec3<f32>) -> f32 {
 
 @compute @workgroup_size(8, 8, 1)
 fn init(@builtin(global_invocation_id) invocation_id: vec3<u32>, @builtin(num_workgroups) num_workgroups: vec3<u32>) {
-    let location = vec2<i32>(i32(invocation_id.x), i32(invocation_id.y));
+    let location = vec2<i32>(invocation_id.xy);
 
-    let zoom = 30.0;
+    // big landscape
+    let zoom1 = 100.0;
+    let value = perlinNoise3(vec3<f32>(f32(invocation_id.x)/zoom1, f32(invocation_id.y)/zoom1, params.random_float));
+
+    // detailed landscape
+    let zoom2 = 40.0;
+    let small_value = perlinNoise3(vec3<f32>(f32(invocation_id.x)/zoom2, f32(invocation_id.y)/zoom2, params.random_float));
     
-    let color = vec4<f32>(perlinNoise3(vec3<f32>(f32(invocation_id.x)/zoom, f32(invocation_id.y)/zoom, params.random_float)));
+    let color = vec4<f32>(value * small_value);
 
     textureStore(texture, location, color);
 }

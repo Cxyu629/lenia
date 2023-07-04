@@ -20,63 +20,56 @@ pub struct LeniaBoard {
 }
 pub struct LeniaRule {
     kernel_shell: KernelShell,
-    growth_mapping: GrowthMapping,
+    growth_mapping: Mapping,
 }
 
 pub struct KernelShell {
-    beta: Vec<f32>,                                     // kernel peaks
-    kernel_core: Arc<dyn Fn(f32) -> f32 + Send + Sync>, // kernel core K_C : [0, 1] → [0, 1]
+    beta: Vec<f32>,       // kernel peaks
+    kernel_core: Mapping, // kernel core K_C : [0, 1] → [0, 1]
 }
 
 #[derive(Deref)]
-pub struct GrowthMapping(Arc<dyn Fn(f32) -> f32 + Send + Sync>);
+pub struct Mapping(Arc<dyn Fn(f32) -> f32 + Send + Sync>);
 
 #[allow(unused)]
-pub enum GrowthMappingType {
-    Exponential,
-    Polynomial { alpha: f32 },
-    Rectangular,
+pub enum MappingType {
+    GaussianCore { alpha: f32 },
+    PolynomialCore { alpha: f32 },
+    StepCore,
+    GaussianGrowth { mu: f32, sigma: f32 },
+    PolynomialGrowth { mu: f32, sigma: f32, alpha: f32 },
+    StepGrowth { mu: f32, sigma: f32 },
 }
 
 #[allow(dead_code)]
-impl GrowthMapping {
+impl Mapping {
     pub fn new(f: Arc<dyn Fn(f32) -> f32 + Send + Sync>) -> Self {
         Self(f)
     }
 
-    pub fn from_type(ty: GrowthMappingType, mu: f32, sigma: f32) -> Self {
+    pub fn from_type(ty: MappingType) -> Self {
         let func = move |x: f32| match ty {
-            GrowthMappingType::Exponential => {
-                2.0 * (-((x - mu) * (x - mu)) / (2.0 * sigma * sigma)).exp() - 1.0
+            MappingType::GaussianCore { alpha } => (alpha - alpha / (4.0 * x * (1.0 - x))).exp(),
+            MappingType::PolynomialCore { alpha } => (4.0 * x * (1.0 - x)).powf(alpha),
+            MappingType::StepCore => (0.25 <= x && x <= 0.75) as u8 as f32,
+            MappingType::GaussianGrowth { mu, sigma } => {
+                (-((x - mu).powi(2)) / (2.0 * sigma.powi(2))).exp()
             }
-            GrowthMappingType::Polynomial { alpha } => {
-                let rect = if 0.0 <= x && x < mu - 3.0 * sigma {
-                    0.0
-                } else if x <= mu + 3.0 * sigma {
-                    1.0
-                } else if x <= 1.0 {
-                    0.0
-                } else {
-                    panic!("{} is not within range [0,1].", x);
-                };
-
-                let poly_num = (1.0 - ((x - mu) * (x - mu)) / (9.0 * sigma * sigma)).powf(alpha);
-
-                2.0 * rect * poly_num - 1.0
-            }
-            GrowthMappingType::Rectangular => {
-                if 0.0 <= x && x < mu - sigma {
-                    -1.0
-                } else if x <= mu + sigma {
-                    1.0
-                } else if x <= 1.0 {
-                    -1.0
-                } else {
-                    panic!("{} is not within range [0,1].", x);
-                }
+            MappingType::PolynomialGrowth { mu, sigma, alpha } => {
+                (((x - mu).abs() <= 3.0 * sigma) as u8 as f32)
+                    * (1.0 - (x - mu).powi(2) / (9.0 * sigma.powi(2))).powf(alpha)
+            }   
+            MappingType::StepGrowth { mu, sigma } => {
+                ((x - mu).abs() <= sigma) as u8 as f32
             }
         };
         Self(Arc::new(func))
+    }
+}
+
+impl From<Arc<dyn Fn(f32) -> f32 + Send + Sync>> for Mapping {
+    fn from(value: Arc<dyn Fn(f32) -> f32 + Send + Sync>) -> Self {
+        Self(value)
     }
 }
 
@@ -87,23 +80,29 @@ pub struct KernelImage {
 }
 
 impl KernelImage {
-    pub fn new(shell: &KernelShell, resolution: u32, zoom: f32) -> Self {
-        let center = Vec2::splat((resolution as f32 - 1.0) / 2.0);
+    pub fn new(shell: &KernelShell, radius: u32, zoom: f32) -> Self {
+        let center = Vec2::splat(radius as f32);
 
-        let mut buffer = image::Rgba32FImage::new(resolution, resolution);
+        let mut buffer = image::Rgba32FImage::new(radius * 2 + 1, radius * 2 + 1);
         let mut area = Vec4::splat(0.0);
 
         for (x, y, pixel) in buffer.enumerate_pixels_mut() {
             let point = Vec2::new(x as f32, y as f32);
             let dist = center.distance(point) / zoom;
-            let normal_dist = dist / resolution as f32;
+            let normal_dist = dist / radius as f32;
 
             if normal_dist > 1.0 {
                 *pixel = image::Rgba::<f32>([0.0, 0.0, 0.0, 1.0]);
             } else {
-                let beta_size = shell.beta.len() as f32;
-                let kr = normal_dist * beta_size;
-                let value = shell.beta[kr.floor() as usize] * (shell.kernel_core)(kr.fract());
+                let beta_size = shell.beta.len();
+                let kr = normal_dist * beta_size as f32;
+                let index = kr.floor() as usize;
+                let value;
+                if index < beta_size {
+                    value = shell.beta[kr.floor() as usize] * (shell.kernel_core)(kr.fract());
+                } else {
+                    value = 0.0;
+                }
 
                 *pixel = image::Rgba::<f32>([value, value, value, 1.0]);
                 area += Vec4::splat(value);
@@ -126,18 +125,18 @@ impl LeniaBoard {
     pub fn new(
         lenia_rule: LeniaRule,
         space_resolution: (u32, u32),
-        dx: u32,
+        r: u32, // cells per kernel radius
         dt: f32,
         growth_resolution: u32,
     ) -> Self {
-        if dx * 2 + 1 > space_resolution.0 || dx * 2 + 1 > space_resolution.1 {
-            panic!("`dx` is larger than `space_resolution`, kernel will overlap with itself")
+        if r * 2 + 1 > space_resolution.0 || r * 2 + 1 > space_resolution.1 {
+            panic!("diameter is larger than `space_resolution`, kernel will overlap with itself")
         }
-        let kernel_image = KernelImage::new(&lenia_rule.kernel_shell, dx * 2 + 1, 1.0);
+        let kernel_image = KernelImage::new(&lenia_rule.kernel_shell, r, 1.0);
         Self {
             lenia_rule,
             space_resolution,
-            dx,
+            dx: r,
             dt,
             growth_resolution,
             kernel_image,
@@ -161,16 +160,14 @@ impl LeniaBoard {
     pub fn get_growth_vector(&self) -> Vec<f32> {
         (0..self.growth_resolution)
             .map(|index| {
-                (self.lenia_rule.growth_mapping)(
-                    index as f32 / (self.growth_resolution - 1) as f32,
-                )
+                (self.lenia_rule.growth_mapping)(index as f32 / (self.growth_resolution - 1) as f32)
             })
             .collect()
     }
 }
 
 impl LeniaRule {
-    pub fn new(kernel_shell: KernelShell, growth_mapping: GrowthMapping) -> Self {
+    pub fn new(kernel_shell: KernelShell, growth_mapping: Mapping) -> Self {
         Self {
             kernel_shell,
             growth_mapping,
@@ -179,7 +176,7 @@ impl LeniaRule {
 }
 
 impl KernelShell {
-    pub fn new(beta: Vec<f32>, kernel_core: Arc<dyn Fn(f32) -> f32 + Send + Sync>) -> Self {
+    pub fn new(beta: Vec<f32>, kernel_core: Mapping) -> Self {
         Self { beta, kernel_core }
     }
 }

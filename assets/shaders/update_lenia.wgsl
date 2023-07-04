@@ -49,7 +49,7 @@ fn calculate_growth(value: f32, resolution: u32) -> f32 {
     let left_weight = fract(float_index);
     let right_weight = 1.0 - fract(float_index);
     
-    return 2.8 * (growth_array[u32(left_index)] * left_weight + growth_array[u32(right_index)] + right_weight) - 1.0;
+    return (growth_array[u32(left_index)] * left_weight + growth_array[u32(right_index)] * right_weight);
 }
 
 @compute @workgroup_size(8, 8, 1)
@@ -59,10 +59,10 @@ fn update(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
 
     let current = clamp(textureLoad(texture, location).x, 0.0, 1.0);
     let potential = calculate_with_texture(location, kernel_texture, params.kernel_area, (params.kernel_resolution - 1.0)/2.0);
-    let growth = calculate_growth(potential, params.growth_resolution);
-    let timestep = params.dt * params.delta_time;
+    let growth = 2.0 * calculate_growth(potential, params.growth_resolution) - 1.0;
+    let timestep = params.dt;
 
-    let color = vec4<f32>(current + timestep * growth);
+    let color = vec4<f32>(clamp(current + timestep * growth, 0.0, 1.0));
 
     storageBarrier();
 

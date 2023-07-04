@@ -1,16 +1,19 @@
 use std::num::NonZeroU32;
 
 use bevy::core::cast_slice;
+use bevy::prelude::*;
+use bevy::render::render_resource::*;
+use bevy::render::renderer::RenderDevice;
 use bevy::render::{renderer::RenderQueue, RenderApp, RenderSet};
 
-pub mod lenia;
+pub mod lenia_rules;
 pub mod params;
 
 use crate::*;
 
 use self::params::LeniaGPUGrowthArrayBuffer;
 use self::{
-    lenia::LeniaBoard,
+    lenia_rules::LeniaBoard,
     params::{LeniaGPUParams, LeniaGPUParamsBuffer, LeniaGPUTexture},
 };
 
